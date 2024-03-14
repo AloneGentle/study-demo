@@ -2,12 +2,18 @@ package com.example.studydemo.controller;
 
 import com.example.studydemo.entity.User;
 import com.example.studydemo.service.UserService;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/users")
@@ -16,10 +22,13 @@ public class UserController {
     private final String SESSION_KEY_PREFIX = "user_session:";
     private final long SESSION_EXPIRATION_SECONDS = 3600; // Session 过期时间，单位为秒
 
+    private final RedisTemplate<String, String> redisTemplate; // 注入 RedisTemplate
+
+
     @Autowired
-    public UserController(UserService userService) {
+    public UserController(UserService userService, RedisTemplate<String, String> redisTemplate) {
         this.userService = userService;
-    }
+        this.redisTemplate = redisTemplate;}
 
     @PostMapping("/register")
     public User registerUser(@RequestBody User user) {
@@ -58,12 +67,24 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestParam String username, @RequestParam String password) {
+    public ResponseEntity<String> login(HttpServletRequest request, HttpServletResponse response, @RequestParam String username, @RequestParam String password) {
         // 验证用户名和密码
         boolean isAuthenticated = userService.authenticateUser(username, password);
 
-        // 如果验证成功，返回成功消息
+        // 如果验证成功，生成 Session ID
         if (isAuthenticated) {
+            String sessionId = UUID.randomUUID().toString();
+
+            // 将 Session ID 存储到 Redis 中，并设置过期时间
+            String key = SESSION_KEY_PREFIX + sessionId;
+            redisTemplate.opsForValue().set(key, username, SESSION_EXPIRATION_SECONDS, TimeUnit.SECONDS);
+
+            // 将 Session ID 存储到 Cookie 中，并设置过期时间
+            Cookie cookie = new Cookie("SESSION_ID", sessionId);
+            cookie.setMaxAge((int) SESSION_EXPIRATION_SECONDS);
+            cookie.setPath("/");
+            response.addCookie(cookie);
+
             return ResponseEntity.ok("Login successful");
         } else {
             // 如果验证失败，返回错误消息
